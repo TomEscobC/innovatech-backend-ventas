@@ -80,12 +80,16 @@ jobs:
             docker stop backend-ventas 2>/dev/null || true
             docker rm backend-ventas 2>/dev/null || true
 
+            # Asegurar que la red interna existe
+            docker network create backend-net 2>/dev/null || true
+
             docker run -d \
               --name backend-ventas \
+              --network backend-net \
               --restart unless-stopped \
               -p 8080:8080 \
-              -e DB_ENDPOINT="${{ secrets.DB_ENDPOINT }}" \
-              -e DB_PORT="${{ secrets.DB_PORT }}" \
+              -e DB_ENDPOINT="db-ventas" \
+              -e DB_PORT="3306" \
               -e DB_NAME="${{ secrets.DB_NAME }}" \
               -e DB_USERNAME="${{ secrets.DB_USERNAME }}" \
               -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
