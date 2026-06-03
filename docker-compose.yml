@@ -1,0 +1,76 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────
+# docker-compose.yml — Backend Ventas + MySQL
+# Innovatech Chile | ISY1101 EP2
+# ─────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Base de datos MySQL ──────────────────────────────────────────
+  db-ventas:
+    image: mysql:8.0
+    container_name: db-ventas
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${DB_NAME:-ventas_db}
+      MYSQL_USER: ${DB_USERNAME:-app_user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-app_pass}
+    ports:
+      - "3308:3306"          # Puerto 3308 para no colisionar con db-despachos
+    volumes:
+      - ventas-mysql-data:/var/lib/mysql
+    networks:
+      - ventas-net
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-rootpass}"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── Backend Spring Boot ──────────────────────────────────────────
+  backend-ventas:
+    build:
+      context: ./Springboot-API-REST
+      dockerfile: Dockerfile
+    container_name: backend-ventas
+    restart: unless-stopped
+    depends_on:
+      db-ventas:
+        condition: service_healthy
+    environment:
+      DB_ENDPOINT: db-ventas
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:-ventas_db}
+      DB_USERNAME: ${DB_USERNAME:-app_user}
+      DB_PASSWORD: ${DB_PASSWORD:-app_pass}
+    ports:
+      - "8080:8080"
+    networks:
+      - ventas-net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8080/swagger-ui.html || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+# ─────────────────────────────────────────────────────────────────
+# Named Volumes
+# Justificación: named volume en lugar de bind mount porque:
+#  1. Docker gestiona la ubicación → portable entre SO y EC2
+#  2. Permisos seguros sin exponer rutas del host
+#  3. Persiste aunque se destruya el contenedor
+# ─────────────────────────────────────────────────────────────────
+volumes:
+  ventas-mysql-data:
+    driver: local
+
+# ─────────────────────────────────────────────────────────────────
+# Redes internas
+# ─────────────────────────────────────────────────────────────────
+networks:
+  ventas-net:
+    driver: bridge
