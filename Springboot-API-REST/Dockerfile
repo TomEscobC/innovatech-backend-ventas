@@ -43,9 +43,9 @@ ENV DB_ENDPOINT=localhost \
     DB_USERNAME=app_user \
     DB_PASSWORD=change_me
 
-# Health check
+# Health check — /v3/api-docs responde 200 sin redirección (apto para ALB)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=45s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/swagger-ui.html || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8080/v3/api-docs || exit 1
 
 # Punto de entrada
 ENTRYPOINT ["java", "-jar", "app.jar"]

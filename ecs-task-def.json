@@ -1,0 +1,37 @@
+{
+  "family": "innovatech-backend-ventas",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::ACCOUNT_ID:role/LabRole",
+  "taskRoleArn": "arn:aws:iam::ACCOUNT_ID:role/LabRole",
+  "containerDefinitions": [
+    {
+      "name": "backend-ventas",
+      "image": "ACCOUNT_ID.dkr.ecr.REGION.amazonaws.com/innovatech-backend-ventas:latest",
+      "essential": true,
+      "portMappings": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "DB_PORT", "value": "3306" },
+        { "name": "DB_NAME", "value": "ventas_db" },
+        { "name": "DB_USERNAME", "value": "admin" }
+      ],
+      "secrets": [
+        { "name": "DB_ENDPOINT", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/innovatech/db_endpoint" },
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:ssm:REGION:ACCOUNT_ID:parameter/innovatech/db_password" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/innovatech-backend-ventas",
+          "awslogs-region": "REGION",
+          "awslogs-stream-prefix": "ecs",
+          "awslogs-create-group": "true"
+        }
+      }
+    }
+  ]
+}

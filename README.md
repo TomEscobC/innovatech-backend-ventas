@@ -1,157 +1,134 @@
 # Backend Ventas — API REST Spring Boot
 
-**Innovatech Chile | ISY1101 EP2**
+**Innovatech Chile | ISY1101 — EP3 (Orquestación y automatización en la nube)**
 
-API REST para la gestión de ventas y órdenes de compra, desarrollada con Spring Boot 3.4.4 y Java 17. Containerizada con Docker y desplegada automáticamente en AWS EC2 mediante GitHub Actions.
+API REST de gestión de **ventas/compras** (Spring Boot 3.4.4 + Java 17). En EP3
+corre como contenedor en **Amazon ECS (Fargate)**, con imagen en **Amazon ECR**,
+conectada a **RDS MySQL 8.0**, detrás de un **Application Load Balancer** y con
+**autoscaling** + **logs en CloudWatch**. Entrega continua con **GitHub Actions**.
 
 ---
 
-## Stack tecnológico
+## Stack
 
 | Componente | Tecnología |
 |---|---|
-| Framework | Spring Boot 3.4.4 |
-| Lenguaje | Java 17 |
-| Base de datos | MySQL 8.0 |
-| Contenedor | Docker (multi-stage build) |
-| Registry | Docker Hub |
+| Lenguaje / Framework | Java 17 · Spring Boot 3.4.4 |
+| ORM | Spring Data JPA + Hibernate |
+| Base de datos | **AWS RDS MySQL 8.0** (gestionada) |
+| Contenedor | Docker multi-stage (JDK build → JRE runtime, no-root) |
+| Registro de imágenes | **Amazon ECR** |
+| Orquestación | **Amazon ECS (Fargate)** |
+| Balanceo | **Application Load Balancer** (path `/api/v1/ventas*`) |
+| Escalado | **ECS Target Tracking** (CPU 50%, 1–4 tareas) |
+| Logs | **Amazon CloudWatch** (`/ecs/innovatech-backend-ventas`) |
+| Secrets | **SSM Parameter Store** (password de BD como SecureString) |
 | CI/CD | GitHub Actions |
-| Infraestructura | AWS EC2 (Amazon Linux 2023) |
+| Docs API | Springdoc OpenAPI (Swagger) |
 
 ---
 
-## Estructura del repositorio
+## Arquitectura (EP3)
 
 ```
-innovatech-backend-ventas/
-├── Springboot-API-REST/          # Código fuente Spring Boot
-│   ├── src/
-│   │   ├── main/java/com/citt/
-│   │   │   ├── controller/       # VentaController (endpoints REST)
-│   │   │   ├── persistence/
-│   │   │   │   ├── entity/       # Entidad Venta (JPA)
-│   │   │   │   ├── repository/   # VentaRepository
-│   │   │   │   └── services/     # VentaService + VentaServiceImpl
-│   │   │   └── exceptions/       # Manejo global de errores
-│   │   └── resources/
-│   │       └── application.properties
-│   ├── Dockerfile                # Multi-stage build
-│   └── pom.xml
-├── docker-compose.yml            # Stack local: backend + MySQL
-├── .env.example                  # Variables de entorno de ejemplo
-└── .github/
-    └── workflows/
-        └── deploy.yml            # Pipeline CI/CD
+Navegador → ALB (:80) ──/api/v1/ventas*──→ ECS Service (Fargate :8080)
+                                               │  secrets vía SSM
+                                               ▼
+                                          RDS MySQL  (schema ventas_db)
 ```
+El único punto de entrada público es el ALB. La BD solo acepta conexiones desde
+el Security Group de las tareas ECS.
 
 ---
 
-## Endpoints disponibles
+## Configuración (variables de entorno)
 
-| Método | Endpoint | Descripción |
+| Variable | Origen en ECS | Valor |
 |---|---|---|
-| GET | `/api/v1/ventas` | Listar todas las ventas |
-| GET | `/api/v1/ventas/{id}` | Obtener venta por ID |
-| POST | `/api/v1/ventas` | Crear nueva venta |
-| PUT | `/api/v1/ventas/{id}` | Actualizar venta |
-| DELETE | `/api/v1/ventas/{id}` | Eliminar venta |
+| `DB_ENDPOINT` | **SSM** `/innovatech/db_endpoint` | endpoint del RDS |
+| `DB_PASSWORD` | **SSM** `/innovatech/db_password` (SecureString) | contraseña maestra |
+| `DB_PORT` | task def (environment) | `3306` |
+| `DB_NAME` | task def (environment) | `ventas_db` |
+| `DB_USERNAME` | task def (environment) | `admin` |
 
-Documentación interactiva: `http://<host>:8080/swagger-ui.html`
+El JDBC trae `createDatabaseIfNotExist=true`, así que el schema `ventas_db` se
+crea solo la primera vez. Ver `.env.example` para ejecución local.
 
 ---
 
 ## Ejecución local con Docker Compose
 
-### 1. Configurar variables de entorno
-
 ```bash
 cp .env.example .env
-# Editar .env con valores reales
+docker compose up -d
+docker compose logs -f backend-ventas
 ```
-
-### 2. Levantar el stack
-
-```bash
-docker compose up --build -d
-```
-
-Esto levanta:
-- **db-ventas**: MySQL 8.0 en puerto `3308` del host
-- **backend-ventas**: Spring Boot en puerto `8080`
-
-### 3. Verificar
-
-```bash
-curl http://localhost:8080/api/v1/ventas
-```
+- Swagger UI: http://localhost:8080/swagger-ui.html
+- Health (ALB usa este): http://localhost:8080/v3/api-docs
 
 ---
 
-## Pipeline CI/CD
+## Pipeline CI/CD (GitHub Actions → ECR → ECS)
 
-El pipeline en `.github/workflows/deploy.yml` se activa con cada push a la rama `deploy`:
+Se activa con `push` a la rama **`deploy`** (`.github/workflows/deploy.yml`):
 
 ```
-push → deploy
-       ↓
-  [Job 1] Build y Push
-       ├── Checkout código
-       ├── Set up JDK 17
-       ├── Login Docker Hub
-       └── Build + Push imagen (tomescobc/backend-ventas:latest)
-       ↓
-  [Job 2] Deploy en EC2
-       ├── SSH a instancia EC2 Backend
-       ├── docker pull latest
-       ├── docker stop/rm anterior
-       ├── docker run con variables de entorno
-       └── Verificación docker ps
+checkout
+  → credenciales AWS (Learner Lab, con AWS_SESSION_TOKEN)
+  → resolver ACCOUNT_ID/REGION en ecs-task-def.json
+  → login Amazon ECR
+  → docker build (contexto ./Springboot-API-REST) + push (SHA + latest)
+  → render task definition con la nueva imagen
+  → deploy a ECS (rolling update, espera estabilidad)
 ```
 
-### Secrets requeridos en GitHub
+### Secrets requeridos
 
-| Secret | Descripción |
+| Secret | Para qué |
 |---|---|
-| `DOCKERHUB_USERNAME` | Usuario Docker Hub |
-| `DOCKERHUB_TOKEN` | Access token Docker Hub |
-| `EC2_BACKEND_HOST` | IP pública EC2 Backend |
-| `EC2_USERNAME` | Usuario SSH (`ec2-user`) |
-| `EC2_SSH_PRIVATE_KEY` | Clave privada `.pem` |
-| `DB_NAME` | Nombre de la base de datos |
-| `DB_USERNAME` | Usuario MySQL |
-| `DB_PASSWORD` | Contraseña MySQL |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` | credenciales temporales del Learner Lab |
+
+Se refrescan cada sesión con `innovatech-ep3-infra/update_secrets.py`.
+
+### task definition (`ecs-task-def.json`)
+
+Fargate 512 CPU / 1024 MB · `LabRole` como execution/task role · logs a
+CloudWatch · `DB_ENDPOINT` y `DB_PASSWORD` desde SSM. `ACCOUNT_ID`/`REGION` son
+placeholders que el pipeline resuelve.
 
 ---
 
-## Decisiones técnicas
+## Dockerfile — decisiones técnicas
 
-### Dockerfile multi-stage
-- **Stage 1 (builder):** `eclipse-temurin:17-jdk` — compila el JAR con Maven
-- **Stage 2 (runtime):** `eclipse-temurin:17-jre` — ejecuta solo el JAR (sin JDK)
-- **Beneficio:** imagen final ~60% más liviana, sin herramientas de compilación en producción
+1. **Multi-stage**: builder JDK → runtime JRE, imagen final mínima.
+2. **Usuario no-root** (`appuser`): mínimo privilegio.
+3. **Caché de capas** de dependencias Maven.
+4. **Health check** en `/v3/api-docs` (200 sin redirección, apto para el ALB).
 
-### Usuario no-root
-```dockerfile
-RUN groupadd -r appgroup && useradd -r -g appgroup appuser
-USER appuser
-```
-Principio de mínimo privilegio: el proceso no puede modificar el sistema de archivos del contenedor.
+---
 
-### Named volume para MySQL
-```yaml
-volumes:
-  ventas-mysql-data:
-    driver: local
-```
-Se eligió **named volume** sobre bind mount porque:
-1. Docker gestiona la ubicación → portable entre sistemas operativos y EC2
-2. Permisos seguros sin exponer rutas del host
-3. Los datos persisten aunque se destruya y recree el contenedor
+## Endpoints principales
 
-### Red interna
-```yaml
-networks:
-  ventas-net:
-    driver: bridge
-```
-El backend y MySQL se comunican por nombre de servicio (`db-ventas`) en una red privada. MySQL no es accesible desde el exterior.
+| Método | Endpoint | Descripción |
+|---|---|---|
+| GET | `/api/v1/ventas` | Listar ventas/compras |
+| GET | `/api/v1/ventas/{id}` | Obtener por ID |
+| POST | `/api/v1/ventas` | Crear |
+| PUT | `/api/v1/ventas/{id}` | Actualizar |
+| DELETE | `/api/v1/ventas/{id}` | Eliminar |
+
+A través del ALB: `http://<ALB-DNS>/api/v1/ventas`.
+
+---
+
+## Despliegue completo en AWS
+
+Montaje paso a paso en
+[`innovatech-ep3-infra/GUIA-AWS-EP3.md`](../innovatech-ep3-infra/GUIA-AWS-EP3.md).
+
+---
+
+## Autores
+
+- Tomás Escobar — ISY1101 | DuocUC 2026
+- Matías Ampuero — ISY1101 | DuocUC 2026
